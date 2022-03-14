@@ -17,3 +17,7 @@ class TranslationModel():
         batches_translated = self.model.generate(**batches)
         sentences_translated = [self.tokenizer.decode(s, skip_special_tokens=True) for s in batches_translated]
         return " ".join(sentences_translated)
+    
+    def save_model(self, name):
+        self.tokenizer.save_pretrained(name)
+        self.model.save_pretrained(name)
