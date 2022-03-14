@@ -1,8 +1,11 @@
+from src.utils import read_txt, save_txt
 from src.config import NAME, REGEX
 from src.model import TranslationModel
 
-text = 'Hola, mi nombre es Sergio y soy científico de datos'
+TEXT = read_txt('data/test_text.txt')
 
 if __name__ == '__main__':
     model = TranslationModel(name=NAME, split_regex=REGEX)
-    print(model.translate(text))
+    text_translated = model.translate(TEXT)
+    save_txt('data/test_text_translated.txt', text_translated)
+
