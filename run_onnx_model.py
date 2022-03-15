@@ -1,11 +1,11 @@
-from transformers import AutoTokenizer
-from onnxruntime import InferenceSession
-from transformers import MarianMTModel, MarianTokenizer
+from src.utils import read_txt, save_txt
+from src.config import NAME, NAME_ONNX, REGEX
+from src.models import TranslationModelOnnx
 
+TEXT = read_txt('data/test_text.txt')
 
-tokenizer = AutoTokenizer.from_pretrained('Helsinki-NLP/opus-mt-es-ca')
-session = InferenceSession("onnx/test.onnx")
-# ONNX Runtime expects NumPy arrays as input
-inputs = tokenizer("Hola qué tal soy científico de datos", return_tensors="np")
-outputs = session.run(output_names=["last_hidden_state"], input_feed=dict(inputs))
-print(outputs)
+if __name__ == '__main__':
+    model = TranslationModelOnnx(name_tokenizer=NAME, name_model=NAME_ONNX, split_regex=REGEX)
+    text_translated = model.translate(TEXT)
+
+    save_txt('data/test_text_translated_onnx.txt', text_translated)
