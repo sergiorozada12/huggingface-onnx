@@ -62,7 +62,7 @@ class TranslationDecoder(torch.nn.Module):
         _, n_length, _ = hidden.shape
         mask_selection = torch.arange(n_length, dtype=torch.float32) == index
         mask_selection = mask_selection.view(1, -1, 1)
-        masked_selection = torch.multiply(hidden, mask)
+        masked_selection = torch.multiply(hidden, mask_selection)
         summed = torch.sum(masked_selection, 1)
         hidden_masked = torch.unsqueeze(summed, 1)
 

@@ -1,24 +1,91 @@
 from pathlib import Path
+import numpy as np
 import onnx
+import onnxruntime
 
 from transformers.onnx.convert import export, validate_model_outputs
 from transformers.onnx.features import FeaturesManager
-from transformers import MarianTokenizer
+from transformers import MarianMTModel
 
-class OnnxConverter():
-    @staticmethod
-    def convert_to_onnx(name, feature, output_path, opset, atol):
-        tokenizer = MarianTokenizer.from_pretrained(name)
-        model = FeaturesManager.get_model_from_feature(feature, name)
+import torch
 
-        _, model_onnx_config = FeaturesManager.check_supported_model_or_raise(model, feature=feature)
-        onnx_config = model_onnx_config(model.config)
+class OnnxConverter:
+    def __init__(self, name, batch_size, max_length, embedding_size):
+        self.model = MarianMTModel.from_pretrained(name)
+        self.encoder = self.model.model.encoder
+        self.decoder = self.model.model.decoder
+        self.batch_size = batch_size
+        self.max_length = max_length
+        self.embedding_size = embedding_size
 
-        _, onnx_outputs = export(tokenizer, model, onnx_config, opset, Path(output_path))
-        validate_model_outputs(onnx_config, tokenizer, model, Path(output_path), onnx_outputs, atol)
+    def _convert_encoder(self):
+        encoder_input = torch.randint(10_000, (self.batch_size, self.max_length), requires_grad=False)
+        causal_mask = torch.ones(self.batch_size, self.max_length, requires_grad=False)
+        encoder_hidden_state = self.encoder(encoder_input, causal_mask, return_dict=False)
 
-        model_onnx = onnx.load(output_path)
-        onnx.checker.check_model(model_onnx)
+        torch.onnx.export(
+            self.encoder,
+            (encoder_input, causal_mask),
+            "onnx/encoder.onnx",
+            export_params=True,
+            opset_version=10,
+            do_constant_folding=True,
+            input_names = ['input_ids', 'attention_mask'],
+            output_names = ['output'],
+            dynamic_axes={
+                'input_ids' : {0 : 'batch_size'},
+                'attention_mask' : {0 : 'batch_size'},
+                'output' : {0 : 'batch_size'}})
+
+        onnx_session = onnxruntime.InferenceSession("onnx/encoder.onnx")
+        onnx_inputs = {
+            'input_ids': encoder_input.numpy(),
+            'attention_mask': causal_mask.numpy()
+        }
+        onnx_outputs = onnx_session.run(None, onnx_inputs)
+
+        np.testing.assert_allclose(encoder_hidden_state[0].detach().numpy(), onnx_outputs[0], rtol=1e-03, atol=1e-05)
+        print("Encoder exported OK!")
+    
+    def _convert_decoder(self):
+        decoder_input = torch.randint(10_000, (self.batch_size, self.max_length), requires_grad=False)
+        decoder_mask = torch.ones(self.batch_size, self.max_length, requires_grad=False)
+        encoder_hidden_states = torch.rand(self.batch_size, self.max_length, self.embedding_size, requires_grad=False)
+        encoder_mask = torch.ones(self.batch_size, self.max_length, requires_grad=False)
+        decoder_hidden_states = self.decoder(decoder_input, decoder_mask, encoder_hidden_states, encoder_mask, return_dict=False)
+
+        torch.onnx.export(
+            self.decoder,
+            (decoder_input, decoder_mask, encoder_hidden_states, encoder_mask),
+            "onnx/decoder.onnx",
+            export_params=True,
+            opset_version=10,
+            do_constant_folding=True,
+            input_names = ['input_ids', 'attention_mask', 'encoder_hidden_states', 'encoder_attention_mask'],
+            output_names = ['output'],
+            dynamic_axes={
+                'input_ids' : {0 : 'batch_size'},
+                'attention_mask' : {0 : 'batch_size'},
+                'encoder_hidden_states' : {0 : 'batch_size'},
+                'encoder_attention_mask' : {0 : 'batch_size'},
+                'output' : {0 : 'batch_size'}})
+
+        onnx_session = onnxruntime.InferenceSession("onnx/decoder.onnx")
+        onnx_inputs = {
+            'input_ids': decoder_input.numpy(),
+            'attention_mask': decoder_mask.numpy(),
+            'encoder_hidden_states': encoder_hidden_states.numpy(),
+            'encoder_attention_mask': encoder_mask.numpy()
+        }
+        onnx_outputs = onnx_session.run(None, onnx_inputs)
+
+        np.testing.assert_allclose(decoder_hidden_states[0].detach().numpy(), onnx_outputs[0], rtol=1e-03, atol=1e-05)
+        print("Decoder exported OK!")
+
+    def convert_to_onnx(self):
+        #self._convert_encoder()
+        self._convert_decoder()
+
 
     def optimize_onnx_model():
         from onnxruntime_tools import optimizer
