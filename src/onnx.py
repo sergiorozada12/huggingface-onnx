@@ -14,6 +14,13 @@ class OnnxConverter:
         self.model = MarianMTModel.from_pretrained(name)
         self.encoder = self.model.model.encoder
         self.decoder = self.model.model.decoder
+
+        lm_head_input_size = self.model.lm_head.weight.shape[0]
+        lm_head_output_size = self.model.lm_head.weight.shape[1]
+        self.lm_head = torch.nn.Linear(lm_head_input_size, lm_head_output_size, bias=True)
+        self.lm_head.weight.data = self.model.lm_head.weight
+        self.lm_head.bias.data = self.model.final_logits_bias
+
         self.batch_size = batch_size
         self.max_length = max_length
         self.embedding_size = embedding_size
@@ -46,7 +53,7 @@ class OnnxConverter:
 
         np.testing.assert_allclose(encoder_hidden_state[0].detach().numpy(), onnx_outputs[0], rtol=1e-03, atol=1e-05)
         print("Encoder exported OK!")
-    
+
     def _convert_decoder(self):
         decoder_input = torch.randint(10_000, (self.batch_size, self.max_length), requires_grad=False)
         decoder_mask = torch.ones(self.batch_size, self.max_length, requires_grad=False)
@@ -82,9 +89,34 @@ class OnnxConverter:
         np.testing.assert_allclose(decoder_hidden_states[0].detach().numpy(), onnx_outputs[0], rtol=1e-03, atol=1e-05)
         print("Decoder exported OK!")
 
+    def _convert_lm_head(self):
+        lm_head_input = torch.rand(self.batch_size, self.max_length, self.embedding_size, requires_grad=False)
+        lm_head_output = self.lm_head(lm_head_input)
+
+        torch.onnx.export(
+            self.lm_head,
+            lm_head_input,
+            "onnx/lm_head.onnx",
+            export_params=True,
+            opset_version=10,
+            do_constant_folding=True,
+            input_names = ['input'],
+            output_names = ['output'],
+            dynamic_axes={
+                'input' : {0 : 'batch_size'},
+                'output' : {0 : 'batch_size'}})
+
+        onnx_session = onnxruntime.InferenceSession("onnx/lm_head.onnx")
+        onnx_inputs = {'input': lm_head_input.numpy()}
+        onnx_outputs = onnx_session.run(None, onnx_inputs)
+
+        np.testing.assert_allclose(lm_head_output.detach().numpy(), onnx_outputs[0], rtol=1e-03, atol=1e-05)
+        print("LM Head exported OK!")
+
     def convert_to_onnx(self):
         #self._convert_encoder()
-        self._convert_decoder()
+        #self._convert_decoder()
+        self._convert_lm_head()
 
 
     def optimize_onnx_model():
