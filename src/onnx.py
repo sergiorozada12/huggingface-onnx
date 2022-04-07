@@ -114,8 +114,8 @@ class OnnxConverter:
         print("LM Head exported OK!")
 
     def convert_to_onnx(self):
-        #self._convert_encoder()
-        #self._convert_decoder()
+        self._convert_encoder()
+        self._convert_decoder()
         self._convert_lm_head()
 
 

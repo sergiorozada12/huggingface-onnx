@@ -28,36 +28,39 @@ class TranslationModel():
 
 
 class TranslationEncoder(torch.nn.Module):
-    def __init__(self, model):
+    def __init__(self):
         super().__init__()
-        self.encoder = model.model.encoder
+        self.encoder_session = InferenceSession("onnx/encoder.onnx")
 
     def forward(self, input_ids, attention_mask):
-        return self.encoder(input_ids, attention_mask=attention_mask, return_dict=False)
+        onnx_inputs = {
+            'input_ids': input_ids.numpy(),
+            'attention_mask': attention_mask.numpy()
+        }
+        return self.encoder.run(None, onnx_inputs)
 
 
 class TranslationDecoder(torch.nn.Module):
-    def __init__(self, model, max_length):
+    def __init__(self, max_length):
         super().__init__()
-        self.lm_weights = model.model.shared.weight.clone().detach()
-        self.lm_bias = model.final_logits_bias.clone().detach()
-        self.decoder = model.model.decoder
+        self.decoder = InferenceSession("onnx/decoder.onnx")
+        self.lm_head = InferenceSession("onnx/lm_head.onnx")
+
         self.max_length = max_length
 
-    def forward(self, input_ids, attention_mask, encoder_outputs, index):
+    def forward(self, input_ids, attention_mask, encoder_outputs, encoder_attention_mask, index):
         mask = np.triu(np.ones((self.max_length, self.max_length)), 1)
         mask[mask == 1] = -np.inf
         causal_mask = torch.tensor(mask, dtype=torch.float)
 
-        hidden, = self.decoder(
-            input_ids=input_ids,
-            encoder_hidden_states=encoder_outputs,
-            encoder_padding_mask=attention_mask,
-            decoder_padding_mask=None,
-            decoder_causal_mask=causal_mask,
-            return_dict=False,
-            use_cache=False,
-        )
+        onnx_inputs = {
+            'input_ids': input_ids.numpy(),
+            'attention_mask': attention_mask.numpy(),
+            'encoder_hidden_states': encoder_outputs.numpy(),
+            'encoder_attention_mask': encoder_attention_mask.numpy()
+        }
+        onnx_outputs = self.decoder.run(None, onnx_inputs)
+        hidden = onnx_outputs[0]
 
         _, n_length, _ = hidden.shape
         mask_selection = torch.arange(n_length, dtype=torch.float32) == index
