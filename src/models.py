@@ -37,30 +37,24 @@ class TranslationEncoder(torch.nn.Module):
             'input_ids': input_ids.numpy(),
             'attention_mask': attention_mask.numpy()
         }
-        return self.encoder.run(None, onnx_inputs)
+        return self.encoder_session.run(None, onnx_inputs)
 
 
 class TranslationDecoder(torch.nn.Module):
-    def __init__(self, max_length):
+    def __init__(self):
         super().__init__()
-        self.decoder = InferenceSession("onnx/decoder.onnx")
-        self.lm_head = InferenceSession("onnx/lm_head.onnx")
-
-        self.max_length = max_length
+        self.decoder_session = InferenceSession("onnx/decoder.onnx")
+        self.lm_head_session = InferenceSession("onnx/lm_head.onnx")
 
     def forward(self, input_ids, attention_mask, encoder_outputs, encoder_attention_mask, index):
-        mask = np.triu(np.ones((self.max_length, self.max_length)), 1)
-        mask[mask == 1] = -np.inf
-        causal_mask = torch.tensor(mask, dtype=torch.float)
-
-        onnx_inputs = {
+        decoder_onnx_inputs = {
             'input_ids': input_ids.numpy(),
             'attention_mask': attention_mask.numpy(),
             'encoder_hidden_states': encoder_outputs.numpy(),
             'encoder_attention_mask': encoder_attention_mask.numpy()
         }
-        onnx_outputs = self.decoder.run(None, onnx_inputs)
-        hidden = onnx_outputs[0]
+        decoder_onnx_outputs = self.decoder_session.run(None, decoder_onnx_inputs)
+        hidden = torch.tensor(decoder_onnx_outputs[0], dtype=torch.float32)
 
         _, n_length, _ = hidden.shape
         mask_selection = torch.arange(n_length, dtype=torch.float32) == index
@@ -69,11 +63,10 @@ class TranslationDecoder(torch.nn.Module):
         summed = torch.sum(masked_selection, 1)
         hidden_masked = torch.unsqueeze(summed, 1)
 
-        return torch.nn.functional.linear(
-            input=hidden_masked,
-            weight=self.lm_weights,
-            bias=self.lm_bias
-        )
+        print(hidden_masked.shape)
+
+        lm_head_onnx_inputs = {'input': hidden_masked.numpy()}
+        return self.lm_head_session.run(None, lm_head_onnx_inputs)
 
 
 class TranslationModelOnnx():

@@ -27,7 +27,7 @@ class OnnxConverter:
 
     def _convert_encoder(self):
         encoder_input = torch.randint(10_000, (self.batch_size, self.max_length), requires_grad=False)
-        causal_mask = torch.ones(self.batch_size, self.max_length, requires_grad=False)
+        causal_mask = torch.randint(1, (self.batch_size, self.max_length), requires_grad=False)
         encoder_hidden_state = self.encoder(encoder_input, causal_mask, return_dict=False)
 
         torch.onnx.export(
@@ -56,9 +56,9 @@ class OnnxConverter:
 
     def _convert_decoder(self):
         decoder_input = torch.randint(10_000, (self.batch_size, self.max_length), requires_grad=False)
-        decoder_mask = torch.ones(self.batch_size, self.max_length, requires_grad=False)
+        decoder_mask = torch.randint(1, (self.batch_size, self.max_length), requires_grad=False)
         encoder_hidden_states = torch.rand(self.batch_size, self.max_length, self.embedding_size, requires_grad=False)
-        encoder_mask = torch.ones(self.batch_size, self.max_length, requires_grad=False)
+        encoder_mask = torch.randint(1, (self.batch_size, self.max_length), requires_grad=False)
         decoder_hidden_states = self.decoder(decoder_input, decoder_mask, encoder_hidden_states, encoder_mask, return_dict=False)
 
         torch.onnx.export(
