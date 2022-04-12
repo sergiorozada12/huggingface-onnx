@@ -27,12 +27,12 @@ class OnnxConverter:
 
     def _convert_encoder(self):
         encoder_input = torch.randint(10_000, (self.batch_size, self.max_length), requires_grad=False)
-        causal_mask = torch.randint(1, (self.batch_size, self.max_length), requires_grad=False)
-        encoder_hidden_state = self.encoder(encoder_input, causal_mask, return_dict=False)
+        padding_mask = torch.randint(1, (self.batch_size, self.max_length), requires_grad=False)
+        encoder_hidden_state = self.encoder(encoder_input, padding_mask, return_dict=False)
 
         torch.onnx.export(
             self.encoder,
-            (encoder_input, causal_mask),
+            (encoder_input, padding_mask),
             "onnx/encoder.onnx",
             export_params=True,
             opset_version=10,
@@ -47,7 +47,7 @@ class OnnxConverter:
         onnx_session = onnxruntime.InferenceSession("onnx/encoder.onnx")
         onnx_inputs = {
             'input_ids': encoder_input.numpy(),
-            'attention_mask': causal_mask.numpy()
+            'attention_mask': padding_mask.numpy()
         }
         onnx_outputs = onnx_session.run(None, onnx_inputs)
 
@@ -90,7 +90,7 @@ class OnnxConverter:
         print("Decoder exported OK!")
 
     def _convert_lm_head(self):
-        lm_head_input = torch.rand(self.batch_size, self.max_length, self.embedding_size, requires_grad=False)
+        lm_head_input = torch.rand(self.batch_size, 1, self.embedding_size, requires_grad=False)
         lm_head_output = self.lm_head(lm_head_input)
 
         torch.onnx.export(
