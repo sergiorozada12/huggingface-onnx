@@ -56,12 +56,12 @@ class TranslationDecoder(torch.nn.Module):
         self.main_input_name = 'decoder'
 
     def forward(self, input_ids, encoder_outputs, encoder_attention_mask, index):
-        attention_maxk = [1]*(index + 1) + [0]*(self.max_length - index - 1)
-        attention_maxk = torch.tensor([attention_maxk], dtype=torch.int64)
+        attention_mask = torch.tensor([[1]*(index + 1)], dtype=torch.int64)
+        attention_mask = torch.nn.functional.pad(attention_mask, value=0, mode='constant', pad=(0, self.max_length - index - 1))
 
         decoder_onnx_inputs = {
             'input_ids': input_ids.numpy(),
-            'attention_mask': attention_maxk.numpy(),
+            'attention_mask': attention_mask.numpy(),
             'encoder_hidden_states': encoder_outputs.numpy(),
             'encoder_attention_mask': encoder_attention_mask.numpy()
         }
@@ -91,14 +91,15 @@ class TranslationModelOnnx:
     def generate(self, tokens):
         enc_inputs, enc_att_mask = tokens['input_ids'], tokens['attention_mask']
         hidden = self.encoder(enc_inputs, enc_att_mask)
+
         dec_inputs = [self.config.pad_token_id]*self.max_length
         dec_inputs[0] = self.config.decoder_start_token_id
         dec_inputs = torch.tensor([dec_inputs], dtype=torch.int64)
-        print(dec_inputs)
-        for idx in range(self.max_length):
+        for idx in range(self.max_length - 1):
             output = self.decoder(dec_inputs, hidden, enc_att_mask, idx)
             token_id = output.argmax().item()
-            dec_inputs[0, idx] = token_id
-            print(token_id)
-            #print(output[idx])
+            dec_inputs[0, idx + 1] = token_id
+            if token_id == self.config.eos_token_id:
+                break
+        return dec_inputs
 
