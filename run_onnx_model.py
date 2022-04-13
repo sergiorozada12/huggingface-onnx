@@ -1,6 +1,6 @@
 from src.utils import read_txt, save_txt
 from src.config import NAME, NAME_ONNX, REGEX, MAX_LENGTH
-from src.models import TranslationEncoder, TranslationDecoder, TranslationModelOnnx
+from src.models import TranslationModelOnnx
 from transformers import MarianTokenizer, MarianMTModel
 import re
 import numpy as np

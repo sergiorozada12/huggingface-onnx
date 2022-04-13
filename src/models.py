@@ -1,12 +1,7 @@
 import re
 import numpy as np
-import torch
 from transformers import MarianMTModel, MarianTokenizer
 from onnxruntime import InferenceSession
-
-from transformers.generation_utils import GenerationMixin
-from transformers.modeling_outputs import Seq2SeqLMOutput, BaseModelOutput
-from transformers.modeling_utils import PreTrainedModel
 
 
 class TranslationModel():
@@ -31,75 +26,70 @@ class TranslationModel():
         self.model.save_pretrained(name)
 
 
-class TranslationEncoder(torch.nn.Module):
+class TranslationEncoderOnnx:
     def __init__(self):
         super().__init__()
         self.encoder_session = InferenceSession("onnx/encoder.onnx")
-        self.main_input_name = 'encoder'
 
-    def forward(self, input_ids, attention_mask):
+    def __call__(self, input_ids, attention_mask):
         onnx_inputs = {
-            'input_ids': input_ids.numpy(),
-            'attention_mask': attention_mask.numpy()
+            'input_ids': input_ids,
+            'attention_mask': attention_mask
         }
         hidden = self.encoder_session.run(None, onnx_inputs)
-        return torch.tensor(hidden[0], dtype=torch.float32)
+        return hidden[0]
 
 
-class TranslationDecoder(torch.nn.Module):
+class TranslationDecoderOnnx:
     def __init__(self, max_length):
         super().__init__()
         self.decoder_session = InferenceSession("onnx/decoder.onnx")
         self.lm_head_session = InferenceSession("onnx/lm_head.onnx")
 
         self.max_length = max_length
-        self.main_input_name = 'decoder'
 
-    def forward(self, input_ids, encoder_outputs, encoder_attention_mask, index):
-        attention_mask = torch.tensor([[1]*(index + 1)], dtype=torch.int64)
-        attention_mask = torch.nn.functional.pad(attention_mask, value=0, mode='constant', pad=(0, self.max_length - index - 1))
+    def __call__(self, input_ids, encoder_outputs, encoder_attention_mask, index):
+        attention_mask = np.ones_like(input_ids)
+        attention_mask[:, index + 1:] = 0
 
         decoder_onnx_inputs = {
-            'input_ids': input_ids.numpy(),
-            'attention_mask': attention_mask.numpy(),
-            'encoder_hidden_states': encoder_outputs.numpy(),
-            'encoder_attention_mask': encoder_attention_mask.numpy()
+            'input_ids': input_ids,
+            'attention_mask': attention_mask,
+            'encoder_hidden_states': encoder_outputs,
+            'encoder_attention_mask': encoder_attention_mask
         }
-        decoder_onnx_outputs = self.decoder_session.run(None, decoder_onnx_inputs)
-        hidden = torch.tensor(decoder_onnx_outputs[0], dtype=torch.float32)
+        hidden = self.decoder_session.run(None, decoder_onnx_inputs)[0]
 
         _, n_length, _ = hidden.shape
-        mask_selection = torch.arange(n_length, dtype=torch.float32) == index
-        mask_selection = mask_selection.view(1, -1, 1)
-        masked_selection = torch.multiply(hidden, mask_selection)
-        summed = torch.sum(masked_selection, 1)
-        hidden_masked = torch.unsqueeze(summed, 1)
+        mask_selection = np.arange(n_length) == index
+        mask_selection = mask_selection.reshape(1, -1, 1)
+        masked_selection = np.multiply(hidden, mask_selection)
+        summed = np.sum(masked_selection, 1)
+        hidden_masked = np.expand_dims(summed, 1)
 
-        lm_head_onnx_inputs = {'input': hidden_masked.numpy()}
+        lm_head_onnx_inputs = {'input': hidden_masked}
         output = self.lm_head_session.run(None, lm_head_onnx_inputs)
-        return torch.tensor(output[0], dtype=torch.float32)
+        return output[0]
 
 
 class TranslationModelOnnx:
     def __init__(self, max_length, config):
-        self.encoder = TranslationEncoder()
-        self.decoder = TranslationDecoder(max_length)
+        self.encoder = TranslationEncoderOnnx()
+        self.decoder = TranslationDecoderOnnx(max_length)
 
         self.max_length = max_length
         self.config = config
 
     def generate(self, tokens):
-        enc_inputs, enc_att_mask = tokens['input_ids'], tokens['attention_mask']
+        enc_inputs, enc_att_mask = tokens['input_ids'].numpy(), tokens['attention_mask'].numpy()
         hidden = self.encoder(enc_inputs, enc_att_mask)
 
-        dec_inputs = [self.config.pad_token_id]*self.max_length
-        dec_inputs[0] = self.config.decoder_start_token_id
-        dec_inputs = torch.tensor([dec_inputs], dtype=torch.int64)
+        dec_inputs = np.ones_like(enc_inputs)*self.config.pad_token_id
+        dec_inputs[:, 0] = self.config.decoder_start_token_id
         for idx in range(self.max_length - 1):
             output = self.decoder(dec_inputs, hidden, enc_att_mask, idx)
-            token_id = output.argmax().item()
+            token_id = output.argmax()
             dec_inputs[0, idx + 1] = token_id
             if token_id == self.config.eos_token_id:
                 break
         return dec_inputs
-
