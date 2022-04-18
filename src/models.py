@@ -84,14 +84,28 @@ class TranslationModelOnnx:
         enc_inputs, enc_att_mask = tokens['input_ids'].numpy(), tokens['attention_mask'].numpy()
         hidden = self.encoder(enc_inputs, enc_att_mask)
 
+        indices_active = np.arange(enc_inputs.shape[0])
         dec_inputs = np.ones_like(enc_inputs)*self.config.pad_token_id
         dec_inputs[:, 0] = self.config.decoder_start_token_id
+        dec_outputs = np.copy(dec_inputs)
+
         for idx in range(self.max_length - 1):
-            output = self.decoder(dec_inputs, hidden, enc_att_mask, idx)
-            output[:, 0, self.config.pad_token_id] = float("-inf")
-            token_id = output.argmax()
-            dec_inputs[0, idx + 1] = token_id
-            if token_id == self.config.eos_token_id:
+            logits = self.decoder(
+                dec_inputs[indices_active, :],
+                hidden[indices_active, :],
+                enc_att_mask[indices_active, :],
+                idx
+            )
+            logits[:, 0, self.config.pad_token_id] = float("-inf")
+            token_ids = logits.argmax(axis=2).flatten()
+
+            dec_inputs[indices_active, idx + 1] = token_ids
+
+            indices_end = np.where(dec_inputs[:, idx + 1] == self.config.eos_token_id)[0]
+            indices_active = indices_active[np.logical_not(np.isin(indices_active, indices_end))]
+            dec_outputs[indices_end, :] = dec_inputs[indices_end, :]
+
+            if indices_active.size == 0:
                 break
         return dec_inputs
 
@@ -118,7 +132,5 @@ class TranslatorOnnx():
             padding='max_length'
         )
         batches_translated = self.model.generate(batches)
-        print(batches_translated)
         sentences_translated = [self.tokenizer.decode(s, skip_special_tokens=True) for s in batches_translated]
         return " ".join(sentences_translated)
-
