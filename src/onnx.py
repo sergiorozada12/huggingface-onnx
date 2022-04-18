@@ -1,10 +1,6 @@
-from pathlib import Path
 import numpy as np
-import onnx
 import onnxruntime
 
-from transformers.onnx.convert import export, validate_model_outputs
-from transformers.onnx.features import FeaturesManager
 from transformers import MarianMTModel
 
 import torch

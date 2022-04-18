@@ -4,7 +4,7 @@ from transformers import MarianMTModel, MarianTokenizer
 from onnxruntime import InferenceSession
 
 
-class TranslationModel():
+class TranslatorTorch():
     def __init__(self, name, split_regex):
         self.split_regex = split_regex
         self.tokenizer = MarianTokenizer.from_pretrained(name)
@@ -88,8 +88,37 @@ class TranslationModelOnnx:
         dec_inputs[:, 0] = self.config.decoder_start_token_id
         for idx in range(self.max_length - 1):
             output = self.decoder(dec_inputs, hidden, enc_att_mask, idx)
+            output[:, 0, self.config.pad_token_id] = float("-inf")
             token_id = output.argmax()
             dec_inputs[0, idx + 1] = token_id
             if token_id == self.config.eos_token_id:
                 break
         return dec_inputs
+
+
+class TranslatorOnnx():
+    def __init__(self, name, split_regex, max_length):
+        self.split_regex = split_regex
+        self.max_length = max_length
+        self.tokenizer = MarianTokenizer.from_pretrained(name)
+
+        config_file = MarianMTModel.from_pretrained(name).config
+        self.model = TranslationModelOnnx(max_length, config_file)
+    
+    def _prepare_text(self, text):
+        text_filtered = text.replace('\n', ' ').strip()
+        return re.split(self.split_regex, text_filtered)
+
+    def translate(self, text):
+        sentences = self._prepare_text(text)
+        batches = self.tokenizer.prepare_seq2seq_batch(
+            sentences,
+            return_tensors="pt",
+            max_length=self.max_length,
+            padding='max_length'
+        )
+        batches_translated = self.model.generate(batches)
+        print(batches_translated)
+        sentences_translated = [self.tokenizer.decode(s, skip_special_tokens=True) for s in batches_translated]
+        return " ".join(sentences_translated)
+
