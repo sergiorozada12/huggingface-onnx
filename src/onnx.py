@@ -38,9 +38,9 @@ class OnnxConverter:
             input_names = ['input_ids', 'attention_mask'],
             output_names = ['output'],
             dynamic_axes={
-                'input_ids' : {0 : 'batch_size'},
-                'attention_mask' : {0 : 'batch_size'},
-                'output' : {0 : 'batch_size'}})
+                'input_ids' : {0 : 'batch_size', 1: 'seq_length'},
+                'attention_mask' : {0 : 'batch_size', 1: 'seq_length'},
+                'output' : {0 : 'batch_size', 1: 'seq_length'}})
 
         onnx_session = onnxruntime.InferenceSession("onnx/encoder.onnx")
         onnx_inputs = {
@@ -69,11 +69,11 @@ class OnnxConverter:
             input_names = ['input_ids', 'attention_mask', 'encoder_hidden_states', 'encoder_attention_mask'],
             output_names = ['output'],
             dynamic_axes={
-                'input_ids' : {0 : 'batch_size'},
-                'attention_mask' : {0 : 'batch_size'},
-                'encoder_hidden_states' : {0 : 'batch_size'},
-                'encoder_attention_mask' : {0 : 'batch_size'},
-                'output' : {0 : 'batch_size'}})
+                'input_ids' : {0 : 'batch_size', 1: 'seq_length'},
+                'attention_mask' : {0 : 'batch_size', 1: 'seq_length'},
+                'encoder_hidden_states' : {0 : 'batch_size', 1: 'seq_length'},
+                'encoder_attention_mask' : {0 : 'batch_size', 1: 'seq_length'},
+                'output' : {0 : 'batch_size', 1: 'seq_length'}})
 
         onnx_session = onnxruntime.InferenceSession("onnx/decoder.onnx")
         onnx_inputs = {

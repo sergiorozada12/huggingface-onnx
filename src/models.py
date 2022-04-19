@@ -17,7 +17,14 @@ class TranslatorTorch():
     def translate(self, text):
         sentences = self._prepare_text(text)
         batches = self.tokenizer.prepare_seq2seq_batch(sentences, return_tensors="pt")
-        batches_translated = self.model.generate(**batches)
+        batches_translated = self.model.generate(
+            **batches,
+            num_beams=1,
+            num_beam_groups=1,
+            do_sample=False,
+            constraints=None,
+            force_words_ids=None,
+        )
         sentences_translated = [self.tokenizer.decode(s, skip_special_tokens=True) for s in batches_translated]
         return " ".join(sentences_translated)
     
@@ -41,12 +48,10 @@ class TranslationEncoderOnnx:
 
 
 class TranslationDecoderOnnx:
-    def __init__(self, max_length):
+    def __init__(self):
         super().__init__()
         self.decoder_session = InferenceSession("onnx/decoder.onnx")
         self.lm_head_session = InferenceSession("onnx/lm_head.onnx")
-
-        self.max_length = max_length
 
     def __call__(self, input_ids, encoder_outputs, encoder_attention_mask, index):
         attention_mask = np.ones_like(input_ids)
@@ -73,27 +78,28 @@ class TranslationDecoderOnnx:
 
 
 class TranslationModelOnnx:
-    def __init__(self, max_length, config):
+    def __init__(self, config, max_length=100):
         self.encoder = TranslationEncoderOnnx()
-        self.decoder = TranslationDecoderOnnx(max_length)
-
-        self.max_length = max_length
+        self.decoder = TranslationDecoderOnnx()
         self.config = config
+        self.max_length = max_length
 
     def generate(self, tokens):
         enc_inputs, enc_att_mask = tokens['input_ids'].numpy(), tokens['attention_mask'].numpy()
         hidden = self.encoder(enc_inputs, enc_att_mask)
 
+        bsz = enc_inputs.shape[0]
+
         indices_active = np.arange(enc_inputs.shape[0])
-        dec_inputs = np.ones_like(enc_inputs)*self.config.pad_token_id
+        dec_inputs = np.ones((bsz, self.max_length), int)*self.config.pad_token_id
         dec_inputs[:, 0] = self.config.decoder_start_token_id
-        dec_outputs = np.copy(dec_inputs)
+        dec_outputs = np.ones((bsz, self.max_length), int)*self.config.pad_token_id
 
         for idx in range(self.max_length - 1):
             logits = self.decoder(
-                dec_inputs[indices_active, :],
-                hidden[indices_active, :],
-                enc_att_mask[indices_active, :],
+                dec_inputs[indices_active, :(idx + 1)],
+                hidden[indices_active, :(idx + 1)],
+                enc_att_mask[indices_active, :(idx + 1)],
                 idx
             )
             logits[:, 0, self.config.pad_token_id] = float("-inf")
@@ -111,13 +117,12 @@ class TranslationModelOnnx:
 
 
 class TranslatorOnnx():
-    def __init__(self, name, split_regex, max_length):
+    def __init__(self, name, split_regex):
         self.split_regex = split_regex
-        self.max_length = max_length
         self.tokenizer = MarianTokenizer.from_pretrained(name)
 
         config_file = MarianMTModel.from_pretrained(name).config
-        self.model = TranslationModelOnnx(max_length, config_file)
+        self.model = TranslationModelOnnx(config_file)
     
     def _prepare_text(self, text):
         text_filtered = text.replace('\n', ' ').strip()
@@ -125,12 +130,7 @@ class TranslatorOnnx():
 
     def translate(self, text):
         sentences = self._prepare_text(text)
-        batches = self.tokenizer.prepare_seq2seq_batch(
-            sentences,
-            return_tensors="pt",
-            max_length=self.max_length,
-            padding='max_length'
-        )
+        batches = self.tokenizer.prepare_seq2seq_batch(sentences, return_tensors="pt")
         batches_translated = self.model.generate(batches)
         sentences_translated = [self.tokenizer.decode(s, skip_special_tokens=True) for s in batches_translated]
         return " ".join(sentences_translated)
