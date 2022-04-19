@@ -1,9 +1,11 @@
 import numpy as np
-import onnxruntime
-
-from transformers import MarianMTModel
 
 import torch
+from transformers import MarianMTModel
+
+import onnx
+import onnxruntime
+
 
 class OnnxConverter:
     def __init__(self, name, batch_size, max_length, embedding_size):
@@ -116,17 +118,10 @@ class OnnxConverter:
 
 
     def optimize_onnx_model():
-        from onnxruntime_tools import optimizer
-        from onnxruntime_tools.transformers.onnx_model_bert import BertOptimizationOptions
+        encoder_onnx_session = onnx.load("onnx/encoder.onnx")
+        decoder_onnx_session = onnxruntime.InferenceSession("onnx/decoder.onnx")
+        lm_head_onnx_session = onnxruntime.InferenceSession("onnx/lm_head.onnx")
 
-        # disable embedding layer norm optimization for better model size reduction
-        opt_options = BertOptimizationOptions('bert')
-        opt_options.enable_embed_layer_norm = False
+        opt_encoder_onnx_session = onnx.optimizer.optimize(encoder_onnx_session, ['fuse_bn_into_conv'] )
 
-        opt_model = optimizer.optimize_model(
-            'onnx/bert-base-cased.onnx',
-            'bert', 
-            num_heads=12,
-            hidden_size=768,
-            optimization_options=opt_options)
-        opt_model.save_model_to_file('bert.opt.onnx')
+        opt_encoder_onnx_session.save_model_to_file("onnx/encoder.opt.onnx")
