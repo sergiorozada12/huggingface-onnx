@@ -23,6 +23,10 @@ if __name__ == '__main__':
     torch_times, onnx_times = [], []
 
     for _ in range(10):
+        model_torch.generate(**batches)
+        model_onnx.generate(batches)
+
+    for _ in range(10):
         start = time.time()
         _ = model_torch.generate(
             **batches,

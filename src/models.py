@@ -1,6 +1,7 @@
 import re
 import numpy as np
 from transformers import MarianMTModel, MarianTokenizer
+
 from onnxruntime import InferenceSession
 
 
@@ -36,7 +37,7 @@ class TranslatorTorch():
 class TranslationEncoderOnnx:
     def __init__(self):
         super().__init__()
-        self.encoder_session = InferenceSession("onnx/encoder.onnx", providers=['CPUExecutionProvider'])
+        self.encoder_session = InferenceSession("onnx/encoder.quant.onnx", providers=['CPUExecutionProvider'])
 
     def __call__(self, input_ids, attention_mask):
         onnx_inputs = {
@@ -50,8 +51,8 @@ class TranslationEncoderOnnx:
 class TranslationDecoderOnnx:
     def __init__(self):
         super().__init__()
-        self.decoder_session = InferenceSession("onnx/decoder.onnx", providers=['CPUExecutionProvider'])
-        self.lm_head_session = InferenceSession("onnx/lm_head.onnx", providers=['CPUExecutionProvider'])
+        self.decoder_session = InferenceSession("onnx/decoder.quant.onnx", providers=['CPUExecutionProvider'])
+        self.lm_head_session = InferenceSession("onnx/lm_head.quant.onnx", providers=['CPUExecutionProvider'])
 
     def __call__(self, input_ids, encoder_outputs, encoder_attention_mask, index):
         attention_mask = np.ones_like(input_ids)

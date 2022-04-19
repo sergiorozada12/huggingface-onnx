@@ -3,8 +3,8 @@ import numpy as np
 import torch
 from transformers import MarianMTModel
 
-import onnx
 import onnxruntime
+from onnxruntime.quantization import quantize_dynamic, QuantType
 
 
 class OnnxConverter:
@@ -33,7 +33,7 @@ class OnnxConverter:
             (encoder_input, padding_mask),
             "onnx/encoder.onnx",
             export_params=True,
-            opset_version=10,
+            opset_version=11,
             do_constant_folding=True,
             input_names = ['input_ids', 'attention_mask'],
             output_names = ['output'],
@@ -64,7 +64,7 @@ class OnnxConverter:
             (decoder_input, decoder_mask, encoder_hidden_states, encoder_mask),
             "onnx/decoder.onnx",
             export_params=True,
-            opset_version=10,
+            opset_version=11,
             do_constant_folding=True,
             input_names = ['input_ids', 'attention_mask', 'encoder_hidden_states', 'encoder_attention_mask'],
             output_names = ['output'],
@@ -96,7 +96,7 @@ class OnnxConverter:
             lm_head_input,
             "onnx/lm_head.onnx",
             export_params=True,
-            opset_version=10,
+            opset_version=11,
             do_constant_folding=True,
             input_names = ['input'],
             output_names = ['output'],
@@ -117,11 +117,19 @@ class OnnxConverter:
         self._convert_lm_head()
 
 
-    def optimize_onnx_model():
-        encoder_onnx_session = onnx.load("onnx/encoder.onnx")
-        decoder_onnx_session = onnxruntime.InferenceSession("onnx/decoder.onnx")
-        lm_head_onnx_session = onnxruntime.InferenceSession("onnx/lm_head.onnx")
+    def optimize_onnx_model(self):
+        sess_options = onnxruntime.SessionOptions()
+        sess_options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
 
-        opt_encoder_onnx_session = onnx.optimizer.optimize(encoder_onnx_session, ['fuse_bn_into_conv'] )
+        sess_options.optimized_model_filepath = "onnx/encoder.opt.onnx"
+        _ = onnxruntime.InferenceSession("onnx/encoder.onnx", sess_options)
 
-        opt_encoder_onnx_session.save_model_to_file("onnx/encoder.opt.onnx")
+        sess_options.optimized_model_filepath = "onnx/decoder.opt.onnx"
+        _ = onnxruntime.InferenceSession("onnx/decoder.onnx", sess_options)
+
+        sess_options.optimized_model_filepath = "onnx/lm_head.opt.onnx"
+        _ = onnxruntime.InferenceSession("onnx/lm_head.onnx", sess_options)
+
+        _ = quantize_dynamic("onnx/encoder.opt.onnx", "onnx/encoder.opt.quant.onnx", weight_type=QuantType.QUInt8)
+        _ = quantize_dynamic("onnx/decoder.opt.onnx", "onnx/decoder.opt.quant.onnx", weight_type=QuantType.QUInt8)
+        _ = quantize_dynamic("onnx/lm_head.opt.onnx", "onnx/lm_head.opt.quant.onnx", weight_type=QuantType.QUInt8)
