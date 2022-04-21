@@ -3,8 +3,9 @@ import numpy as np
 import torch
 from transformers import MarianMTModel
 
+import onnx
 import onnxruntime
-from onnxruntime.quantization import quantize_dynamic, QuantType
+from onnxruntime.quantization import QuantizationMode, quantize
 
 
 class OnnxConverter:
@@ -129,7 +130,33 @@ class OnnxConverter:
 
         sess_options.optimized_model_filepath = "onnx/lm_head.opt.onnx"
         _ = onnxruntime.InferenceSession("onnx/lm_head.onnx", sess_options)
+    
+    def quantize_onnx_model(self):
+        encoder = onnx.load("onnx/encoder.opt.onnx")
+        decoder = onnx.load("onnx/decoder.opt.onnx")
+        lm_head = onnx.load("onnx/lm_head.opt.onnx")
 
-        _ = quantize_dynamic("onnx/encoder.opt.onnx", "onnx/encoder.opt.quant.onnx", weight_type=QuantType.QUInt8)
-        _ = quantize_dynamic("onnx/decoder.opt.onnx", "onnx/decoder.opt.quant.onnx", weight_type=QuantType.QUInt8)
-        _ = quantize_dynamic("onnx/lm_head.opt.onnx", "onnx/lm_head.opt.quant.onnx", weight_type=QuantType.QUInt8)
+        encoder_quant = quantize(
+            model=encoder,
+            quantization_mode=QuantizationMode.IntegerOps,
+            force_fusions=True,
+            symmetric_weight=True,
+        )
+
+        decoder_quant = quantize(
+            model=decoder,
+            quantization_mode=QuantizationMode.IntegerOps,
+            force_fusions=True,
+            symmetric_weight=True,
+        )
+
+        lm_head_quant = quantize(
+            model=lm_head,
+            quantization_mode=QuantizationMode.IntegerOps,
+            force_fusions=True,
+            symmetric_weight=True,
+        )
+
+        onnx.save_model(encoder_quant, "onnx/encoder.opt.quant.onnx")
+        onnx.save_model(decoder_quant, "onnx/decoder.opt.quant.onnx")
+        onnx.save_model(lm_head_quant, "onnx/lm_head.opt.quant.onnx")

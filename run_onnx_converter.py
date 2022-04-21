@@ -13,3 +13,4 @@ if __name__ == '__main__':
     
     converter.convert_to_onnx()
     converter.optimize_onnx_model()
+    converter.quantize_onnx_model()
