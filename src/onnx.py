@@ -7,12 +7,14 @@ import onnx
 import onnxruntime
 from onnxruntime.quantization import QuantizationMode, quantize
 
+from src.wrappers import MarianDecoderWrapped
+
 
 class OnnxConverter:
     def __init__(self, name, batch_size, max_length, embedding_size):
         self.model = MarianMTModel.from_pretrained(name)
         self.encoder = self.model.model.encoder
-        self.decoder = self.model.model.decoder
+        self.decoder = MarianDecoderWrapped(self.model.model.decoder)
 
         lm_head_input_size = self.model.lm_head.weight.shape[0]
         lm_head_output_size = self.model.lm_head.weight.shape[1]
@@ -55,23 +57,21 @@ class OnnxConverter:
 
     def _convert_decoder(self):
         decoder_input = torch.randint(10_000, (self.batch_size, self.max_length), requires_grad=False)
-        decoder_mask = torch.randint(1, (self.batch_size, self.max_length), requires_grad=False)
         encoder_hidden_states = torch.rand(self.batch_size, self.max_length, self.embedding_size, requires_grad=False)
         encoder_mask = torch.randint(1, (self.batch_size, self.max_length), requires_grad=False)
-        decoder_hidden_states = self.decoder(decoder_input, decoder_mask, encoder_hidden_states, encoder_mask, return_dict=False)
+        decoder_hidden_states = self.decoder(decoder_input, encoder_hidden_states, encoder_mask)
 
         torch.onnx.export(
             self.decoder,
-            (decoder_input, decoder_mask, encoder_hidden_states, encoder_mask),
+            (decoder_input, encoder_hidden_states, encoder_mask),
             "onnx/decoder.onnx",
             export_params=True,
             opset_version=11,
             do_constant_folding=True,
-            input_names = ['input_ids', 'attention_mask', 'encoder_hidden_states', 'encoder_attention_mask'],
+            input_names = ['input_ids', 'encoder_hidden_states', 'encoder_attention_mask'],
             output_names = ['output'],
             dynamic_axes={
                 'input_ids' : {0 : 'batch_size', 1: 'seq_length'},
-                'attention_mask' : {0 : 'batch_size', 1: 'seq_length'},
                 'encoder_hidden_states' : {0 : 'batch_size', 1: 'seq_length'},
                 'encoder_attention_mask' : {0 : 'batch_size', 1: 'seq_length'},
                 'output' : {0 : 'batch_size', 1: 'seq_length'}})
@@ -79,7 +79,6 @@ class OnnxConverter:
         onnx_session = onnxruntime.InferenceSession("onnx/decoder.onnx")
         onnx_inputs = {
             'input_ids': decoder_input.numpy(),
-            'attention_mask': decoder_mask.numpy(),
             'encoder_hidden_states': encoder_hidden_states.numpy(),
             'encoder_attention_mask': encoder_mask.numpy()
         }
