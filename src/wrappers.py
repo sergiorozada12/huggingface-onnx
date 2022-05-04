@@ -1,7 +1,6 @@
+import itertools
 import torch
-from transformers.models.marian.modeling_marian import MarianDecoder
 
-from typing import Optional, Tuple
 
 class MarianDecoderWrapped(torch.nn.Module):
     def __init__(self, decoder):
@@ -22,6 +21,37 @@ class MarianDecoderWrapped(torch.nn.Module):
             head_mask=None,
             cross_attn_head_mask=None,
             past_key_values=None,
+            inputs_embeds=None,
+            use_cache=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=False
+        )
+
+
+class MarianDecoderPkvWrapped(torch.nn.Module):
+    def __init__(self, decoder):
+        super(MarianDecoderPkvWrapped, self).__init__()
+        self.decoder = decoder
+
+    def group(self, lst):
+        return tuple(zip(*[itertools.islice(lst, i, None, 4) for i in range(4)]))
+
+    def forward(
+        self,
+        input_ids,
+        *past_key_values
+    ):
+        past_key_values = self.group(past_key_values)
+
+        return self.decoder(
+            input_ids=input_ids,
+            attention_mask=None,
+            encoder_hidden_states=None,
+            encoder_attention_mask=None,
+            head_mask=None,
+            cross_attn_head_mask=None,
+            past_key_values=past_key_values,
             inputs_embeds=None,
             use_cache=None,
             output_attentions=None,
