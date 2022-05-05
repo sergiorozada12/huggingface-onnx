@@ -40,6 +40,8 @@ class MarianDecoderPkvWrapped(torch.nn.Module):
     def forward(
         self,
         input_ids,
+        encoder_hidden_states,
+        encoder_attention_mask,
         *past_key_values
     ):
         past_key_values = self.group(past_key_values)
@@ -47,8 +49,8 @@ class MarianDecoderPkvWrapped(torch.nn.Module):
         return self.decoder(
             input_ids=input_ids,
             attention_mask=None,
-            encoder_hidden_states=None,
-            encoder_attention_mask=None,
+            encoder_hidden_states=encoder_hidden_states,
+            encoder_attention_mask=encoder_attention_mask,
             head_mask=None,
             cross_attn_head_mask=None,
             past_key_values=past_key_values,
