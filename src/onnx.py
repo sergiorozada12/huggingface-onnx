@@ -80,9 +80,10 @@ class OnnxConverter:
         decoder_inputs = (decoder_input, encoder_hidden_states, encoder_mask)
         decoder_input_names = ['input_ids','encoder_hidden_states', 'encoder_attention_mask']
         decoder_output_names = ['output']
+        decoder_output_names += [f"pkv_{i}" for i in range(24)]
 
         decoder_params_names = decoder_input_names + decoder_output_names
-        size_axes = [{0 : 'batch_size', 1: 'seq_length'}]*len(decoder_params_names)
+        size_axes = [{0 : 'batch_size', 1: 'seq_length'}]*4 + [{0 : 'batch_size', 2: 'seq_length'}]*24
         dynamic_axes = dict(zip(decoder_params_names, size_axes))
 
         with torch.no_grad():
@@ -115,16 +116,29 @@ class OnnxConverter:
         flat_past_key_values = functools.reduce(operator.iconcat, past_key_values, [])
         names_past_key_values = [f"pkv_{i}" for i in range(len(flat_past_key_values))]
 
-        decoder_inputs = [decoder_input, encoder_hidden_states, encoder_mask]
-        decoder_inputs = tuple(decoder_inputs + flat_past_key_values)
+        decoder_inputs_raw = [decoder_input, encoder_hidden_states, encoder_mask]
+        decoder_inputs = tuple(decoder_inputs_raw + flat_past_key_values)
         decoder_input_names = ['input_ids', 'encoder_hidden_states', 'encoder_attention_mask']
         decoder_input_names += names_past_key_values
+
         decoder_output_names = ['output']
+        for i in range(len(names_past_key_values)):
+            if (i//2)%2 != 0:
+                name = names_past_key_values[i]
+                decoder_output_names.append(name)
+            else:
+                name = names_past_key_values[i] + 'o'
+                decoder_output_names.append(name)
         decoder_param_names = decoder_input_names + decoder_output_names
 
-        dyax_inp = [{0 : 'batch_size', 1: 'seq_length'}]
+        dyax_gen = [{0 : 'batch_size', 1: 'seq_length'}]
         dyax_pkv = [{0 : 'batch_size', 2: 'seq_length'}]
-        dyax = dyax_inp*len(decoder_input) + dyax_pkv*len(flat_past_key_values) + dyax_inp
+        dyax = (
+            dyax_gen*len(decoder_inputs_raw) +
+            dyax_pkv*len(flat_past_key_values) +
+            dyax_gen +
+            dyax_pkv*len(flat_past_key_values)
+        )
         dynamic_axes = dict(zip(decoder_param_names, dyax))
 
         with torch.no_grad():
@@ -220,7 +234,7 @@ class OnnxConverter:
             symmetric_weight=True,
         )
 
-        decoder_quant = quantize(
+        decoder_pkv_quant = quantize(
             model=decoder_pkv,
             quantization_mode=QuantizationMode.IntegerOps,
             force_fusions=True,
@@ -236,5 +250,5 @@ class OnnxConverter:
 
         onnx.save_model(encoder_quant, "onnx/encoder.opt.quant.onnx")
         onnx.save_model(decoder_quant, "onnx/decoder.opt.quant.onnx")
-        onnx.save_model(decoder_quant, "onnx/decoder_pkv.opt.quant.onnx")
+        onnx.save_model(decoder_pkv_quant, "onnx/decoder_pkv.opt.quant.onnx")
         onnx.save_model(lm_head_quant, "onnx/lm_head.opt.quant.onnx")

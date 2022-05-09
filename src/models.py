@@ -1,4 +1,7 @@
 import re
+import functools
+import operator
+import itertools
 import numpy as np
 from transformers import MarianMTModel, MarianTokenizer
 
@@ -26,6 +29,7 @@ class TranslatorTorch():
             constraints=None,
             force_words_ids=None,
         )
+        print(batches_translated)
         sentences_translated = [self.tokenizer.decode(s, skip_special_tokens=True) for s in batches_translated]
         return " ".join(sentences_translated)
     
@@ -52,29 +56,39 @@ class TranslationDecoderOnnx:
     def __init__(self):
         super().__init__()
         self.decoder_session = InferenceSession("onnx/decoder.opt.quant.onnx", providers=['CPUExecutionProvider'])
+        self.decoder_pkv_session = InferenceSession("onnx/decoder_pkv.opt.quant.onnx", providers=['CPUExecutionProvider'])
         self.lm_head_session = InferenceSession("onnx/lm_head.opt.quant.onnx", providers=['CPUExecutionProvider'])
 
-    def __call__(self, input_ids, encoder_outputs, encoder_attention_mask, index):
-        attention_mask = np.ones_like(input_ids)
-        attention_mask[:, index + 1:] = 0
+    def group(self, lst):
+        return tuple(zip(*[itertools.islice(lst, i, None, 4) for i in range(4)]))
 
-        decoder_onnx_inputs = {
-            'input_ids': input_ids,
-            'encoder_hidden_states': encoder_outputs,
-            'encoder_attention_mask': encoder_attention_mask
-        }
-        hidden = self.decoder_session.run(None, decoder_onnx_inputs)[0]
+    def __call__(self, input_ids, encoder_outputs, encoder_attention_mask, past_key_values=None):
+        if past_key_values:
+            decoder_names = ['input_ids', 'encoder_attention_mask']
+            decoder_inputs = [input_ids, encoder_attention_mask]
+            decoder_pkv = functools.reduce(operator.iconcat, past_key_values, [])
+            decoder_pkv_names = [f"pkv_{i}" for i in range(len(decoder_pkv))]
+            decoder_onnx_inputs = dict(zip(decoder_names + decoder_pkv_names, decoder_inputs + decoder_pkv))
 
-        _, n_length, _ = hidden.shape
-        mask_selection = np.arange(n_length) == index
-        mask_selection = mask_selection.reshape(1, -1, 1)
-        masked_selection = np.multiply(hidden, mask_selection)
-        summed = np.sum(masked_selection, 1)
+            output = self.decoder_pkv_session.run(None, decoder_onnx_inputs)
+            hidden = output[0]
+            pkv = self.group(output[1:])
+        else:
+            decoder_onnx_inputs = {
+                'input_ids': input_ids,
+                'encoder_hidden_states': encoder_outputs,
+                'encoder_attention_mask': encoder_attention_mask
+            }
+            output = self.decoder_session.run(None, decoder_onnx_inputs)
+            hidden = output[0]
+            pkv = self.group(output[1:])
+
+        summed = np.sum(hidden, 1)
         hidden_masked = np.expand_dims(summed, 1)
 
         lm_head_onnx_inputs = {'input': hidden_masked}
         output = self.lm_head_session.run(None, lm_head_onnx_inputs)
-        return output[0]
+        return output[0], pkv
 
 
 class TranslationModelOnnx:
@@ -95,13 +109,22 @@ class TranslationModelOnnx:
         dec_inputs[:, 0] = self.config.decoder_start_token_id
         dec_outputs = np.ones((bsz, self.max_length), int)*self.config.pad_token_id
 
+        past_key_values = None
+
         for idx in range(self.max_length - 1):
-            logits = self.decoder(
-                dec_inputs[indices_active, :(idx + 1)],
-                hidden[indices_active, :(idx + 1)],
-                enc_att_mask[indices_active, :(idx + 1)],
-                idx
-            )
+            if past_key_values:
+                logits, past_key_values = self.decoder(
+                    dec_inputs[indices_active, idx].reshape(-1, 1),
+                    hidden[indices_active, :],
+                    enc_att_mask[indices_active, :],
+                    past_key_values
+                )
+            else:
+                logits, past_key_values = self.decoder(
+                    dec_inputs[indices_active, idx].reshape(-1, 1),
+                    hidden[indices_active, :],
+                    enc_att_mask[indices_active, :],
+                )
             logits[:, 0, self.config.pad_token_id] = float("-inf")
             token_ids = logits.argmax(axis=2).flatten()
 
@@ -110,6 +133,13 @@ class TranslationModelOnnx:
             indices_end = np.where(dec_inputs[:, idx + 1] == self.config.eos_token_id)[0]
             indices_active = indices_active[np.logical_not(np.isin(indices_active, indices_end))]
             dec_outputs[indices_end, :] = dec_inputs[indices_end, :]
+
+            indices_pkv = np.where(token_ids != self.config.eos_token_id)[0]
+            past_key_values = list(map(list, past_key_values))
+            for i in range(len(past_key_values)):
+                for j in range(len(past_key_values[i])):
+                    past_key_values[i][j] = past_key_values[i][j][indices_pkv, :, :, :]
+            past_key_values = tuple(map(tuple, past_key_values))
 
             if indices_active.size == 0:
                 break
