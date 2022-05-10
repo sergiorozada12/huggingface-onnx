@@ -1,7 +1,4 @@
 import re
-import functools
-import operator
-import itertools
 import numpy as np
 from transformers import MarianMTModel, MarianTokenizer
 
@@ -59,20 +56,15 @@ class TranslationDecoderOnnx:
         self.decoder_pkv_session = InferenceSession("onnx/decoder_pkv.opt.quant.onnx", providers=['CPUExecutionProvider'])
         self.lm_head_session = InferenceSession("onnx/lm_head.opt.quant.onnx", providers=['CPUExecutionProvider'])
 
-    def group(self, lst):
-        return tuple(zip(*[itertools.islice(lst, i, None, 4) for i in range(4)]))
-
     def __call__(self, input_ids, encoder_outputs, encoder_attention_mask, past_key_values=None):
         if past_key_values:
             decoder_names = ['input_ids', 'encoder_attention_mask']
             decoder_inputs = [input_ids, encoder_attention_mask]
-            decoder_pkv = functools.reduce(operator.iconcat, past_key_values, [])
-            decoder_pkv_names = [f"pkv_{i}" for i in range(len(decoder_pkv))]
-            decoder_onnx_inputs = dict(zip(decoder_names + decoder_pkv_names, decoder_inputs + decoder_pkv))
+            decoder_onnx_inputs = dict(zip(decoder_names + self.pkv_names, decoder_inputs + past_key_values))
 
             output = self.decoder_pkv_session.run(None, decoder_onnx_inputs)
             hidden = output[0]
-            pkv = self.group(output[1:])
+            pkv = output[1:]
         else:
             decoder_onnx_inputs = {
                 'input_ids': input_ids,
@@ -81,7 +73,9 @@ class TranslationDecoderOnnx:
             }
             output = self.decoder_session.run(None, decoder_onnx_inputs)
             hidden = output[0]
-            pkv = self.group(output[1:])
+            pkv = output[1:]
+
+            self.pkv_names = [f"pkv_{i}" for i in range(len(pkv))]
 
         summed = np.sum(hidden, 1)
         hidden_masked = np.expand_dims(summed, 1)
@@ -107,7 +101,6 @@ class TranslationModelOnnx:
         indices_active = np.arange(enc_inputs.shape[0])
         dec_inputs = np.ones((bsz, self.max_length), int)*self.config.pad_token_id
         dec_inputs[:, 0] = self.config.decoder_start_token_id
-        dec_outputs = np.ones((bsz, self.max_length), int)*self.config.pad_token_id
 
         past_key_values = None
 
@@ -127,23 +120,16 @@ class TranslationModelOnnx:
                 )
             logits[:, 0, self.config.pad_token_id] = float("-inf")
             token_ids = logits.argmax(axis=2).flatten()
-
             dec_inputs[indices_active, idx + 1] = token_ids
 
-            indices_end = np.where(dec_inputs[:, idx + 1] == self.config.eos_token_id)[0]
-            indices_active = indices_active[np.logical_not(np.isin(indices_active, indices_end))]
-            dec_outputs[indices_end, :] = dec_inputs[indices_end, :]
-
-            indices_pkv = np.where(token_ids != self.config.eos_token_id)[0]
-            past_key_values = list(map(list, past_key_values))
-            for i in range(len(past_key_values)):
-                for j in range(len(past_key_values[i])):
-                    past_key_values[i][j] = past_key_values[i][j][indices_pkv, :, :, :]
-            past_key_values = tuple(map(tuple, past_key_values))
+            indices_non_end = np.where(token_ids != self.config.eos_token_id)[0]
+            indices_active = indices_active[indices_non_end]
 
             if indices_active.size == 0:
                 break
-        return dec_inputs
+
+            past_key_values = [pkv[indices_non_end, :, :, :] for pkv in past_key_values]
+        return dec_inputs[:, :idx + 2]
 
 
 class TranslatorOnnx():
