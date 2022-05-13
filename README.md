@@ -1,6 +1,6 @@
 # Huggingface to ONNX 
 
-This repository shows how to port a Huggingface's MarianMT torch model into ONNX. In this case, we have optimize [this](https://huggingface.co/Helsinki-NLP/opus-mt-es-ca) spanish to catalan translation model. MarianMT models need specific routines to be saved as usable ONNX models. The models are then run using a greedy decoding routine using ONNX Runtime.
+This repository shows how to port a Huggingface's MarianMT torch model into ONNX. In this case, we have optimized [this](https://huggingface.co/Helsinki-NLP/opus-mt-es-ca) Spanish to Catalan translation model. MarianMT models need specific routines to be saved as usable ONNX models. Then, the models run using a greedy decoding routine using ONNX Runtime.
 
 The core scripts of this repository are:
 * ```src/onnx.py``` - Routines to save the encoder/decoder into ONNX format, optimize (offlice), and quantize them.
